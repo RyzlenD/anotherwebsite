@@ -1,0 +1,10 @@
+# PyInstaller build folders
+build/
+dist/
+
+# Executables and specs
+*.exe
+*.spec
+
+# Editor configurations
+.vscode/

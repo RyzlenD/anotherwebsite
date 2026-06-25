@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request,jsonify
 
 app = Flask(__name__)
 
@@ -22,6 +22,22 @@ def home():
     # Pass the IP address into the HTML template
     return render_template("index.html", ip=user_ip, status=ip_status)
 
+@app.route("/ping", methods=["POST"])
+def ping():
+    # 1. Grab data sent from the PC (JSON format)
+    client_data = request.get_json()
+
+    # Look for a key named 'message'
+    user_message = client_data.get("message", "No message sent")
+    print(f"Received from PC: {user_message}")
+
+    # 2. Send back a response message to the PC
+    response_data = {
+        "status": "success",
+        "server_message": f"Server received your message: '{user_message}'",
+    }
+
+    return jsonify(response_data)
 
 if __name__ == "__main__":
     # Run the server locally on port 5000

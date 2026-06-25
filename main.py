@@ -155,10 +155,28 @@ def Injector():
         )
 
 def RunMain():
+    import requests
+    URL = "https://anotherwebsite-x1gv.onrender.com"
     print("Main running")
     while True:
         time.sleep(1)
-        print('yield')
+        # Data you want to send to the server
+        payload = {"message": "Hello Server! This is Ryz's PC."}
+        try:
+            # Send the POST request with the JSON data
+            response = requests.post(URL, json=payload)
+
+            # Check if the server responded successfully (Status 200)
+            if response.status_code == 200:
+                # Parse the JSON response text from the server
+                server_reply = response.json()
+                print("Success! Response from server:")
+                print(server_reply.get("server_message"))
+            else:
+                print(f"Server returned an error code: {response.status_code}")
+
+        except Exception as e:
+            print(f"Failed to connect to server: {e}")
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
