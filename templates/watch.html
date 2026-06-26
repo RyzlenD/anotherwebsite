@@ -145,11 +145,15 @@
                         data.files.forEach(item => {
                             const row = document.createElement("tr");
                             const isFolder = item.is_directory; 
-                            const displayName = isFolder ? `📁 ${item.name}` : `📄 ${item.name}`;
+                            
+                            // 1. Keep the visual prefix separate from the actual string identifier
+                            const displayPrefix = isFolder ? `📁 ` : `📄 `;
                             
                             row.innerHTML = `
                                 <td>
-                                    <span class="item-link" onclick="handleItemClick('${item.name}', ${isFolder})">${item.name}</span>
+                                    <span class="item-link" onclick="handleItemClick('${item.name}', ${isFolder})">
+                                        ${displayPrefix}${item.name}
+                                    </span>
                                 </td>
                                 <td style="text-align: right; display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap;">
                                     ${!isFolder ? `<button class="file-action-btn btn-blue" onclick="triggerItemFileAction('download', '${item.name}')">Download</button>` : ''}
