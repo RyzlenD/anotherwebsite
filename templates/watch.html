@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watching {{ address }}</title>
+    <title>Managing {{ address }}</title>
     <style>
         body {
             margin: 0; background: #0b0c10; color: white; font-family: sans-serif;
@@ -19,22 +19,48 @@
             max-width: 90%; max-height: 75vh; border-radius: 8px;
             box-shadow: 0 0 25px rgba(59, 130, 246, 0.3); border: 2px solid #2563eb;
         }
-        /* Right Panel - Sidebar Controls */
+        /* Right Panel - Sidebar Controls (Expanded for ease of use) */
         .sidebar {
-            width: 320px; background: #1f2235; border-left: 2px solid #2e3152;
-            display: flex; flex-direction: column; padding: 30px 20px; box-sizing: border-box;
+            width: 450px; background: #1f2235; border-left: 2px solid #2e3152;
+            display: flex; flex-direction: column; padding: 25px 20px; box-sizing: border-box;
         }
-        .sidebar h3 { text-align: center; margin-bottom: 30px; border-bottom: 1px solid #2e3152; padding-bottom: 10px; }
+        .sidebar h3 { text-align: center; margin-bottom: 12px; border-bottom: 1px solid #2e3152; padding-bottom: 8px; margin-top: 0; color: #94a3b8; }
         .action-btn {
-            background: #ef4444; color: white; border: none; padding: 15px;
-            margin: 10px 0; border-radius: 6px; font-size: 1rem; font-weight: bold;
+            background: #ef4444; color: white; border: none; padding: 12px;
+            margin: 5px 0; border-radius: 6px; font-size: 0.95rem; font-weight: bold;
             cursor: pointer; transition: 0.2s; text-transform: uppercase;
         }
-        .action-btn:hover { opacity: 0.9; transform: translateY(-2px); }
+        .action-btn:hover { opacity: 0.9; transform: translateY(-1px); }
         .btn-blue { background: #3b82f6; }
         .btn-purple { background: #8b5cf6; }
-        .back-link { text-align: center; margin-top: auto; color: #94a3b8; text-decoration: none; }
+        .btn-green { background: #10b981; }
+        .back-link { text-align: center; margin-top: auto; color: #94a3b8; text-decoration: none; padding-top: 15px; }
         .back-link:hover { color: white; }
+
+        /* File Manager Layout */
+        .dir-bar {
+            background: #0d0e15; padding: 10px; border-radius: 6px; margin-bottom: 10px;
+            font-family: monospace; font-size: 0.9rem; border: 1px solid #2e3152;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .file-browser-container {
+            background: #11121a; border: 1px solid #2e3152; border-radius: 6px; 
+            flex-grow: 1; height: 320px; overflow-y: auto; padding: 5px; box-sizing: border-box;
+        }
+        .file-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; text-align: left; }
+        .file-table th { padding: 10px; color: #60a5fa; border-bottom: 1px solid #2e3152; }
+        .file-table td { padding: 8px 10px; border-bottom: 1px solid #1a1c2e; vertical-align: middle; }
+        
+        .file-action-btn {
+            background: #2e3152; color: #fff; border: none; padding: 5px 8px; 
+            border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;
+        }
+        .file-action-btn:hover { background: #3b82f6; }
+        .btn-del:hover { background: #ef4444; }
+        .btn-run:hover { background: #10b981; }
+        
+        .item-link { color: #fff; text-decoration: none; cursor: pointer; }
+        .item-link:hover { color: #60a5fa; text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -45,18 +71,51 @@
     </div>
 
     <div class="sidebar">
-        <h3>CONTROLS</h3>
-        
-        <button class="action-btn" onclick="sendControlAction('Shutdown')">Shutdown</button>
-        <button class="action-btn btn-blue" onclick="sendControlAction('Restart')">Restart</button>
+        <h3>SYSTEM CONTROLS</h3>
+        <div style="display: flex; gap: 10px;">
+            <button class="action-btn" style="flex: 1;" onclick="sendControlAction('Shutdown')">Shutdown</button>
+            <button class="action-btn btn-blue" style="flex: 1;" onclick="sendControlAction('Restart')">Restart</button>
+        </div>
+
+        <main style="display: flex; flex-direction: column; flex-grow: 1; margin-top: 15px;">
+            <h3>FILE MANAGER</h3>
+            
+            <div class="dir-bar">
+                <span id="currentDirDisplay" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px;">Loading path...</span>
+                <button class="file-action-btn" onclick="navigateDirectory('..')">⮬ Up</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                <button class="action-btn btn-blue" style="margin:0; padding: 8px; font-size: 0.85rem;" onclick="triggerGlobalFileAction('upload')">⭱ Upload File</button>
+                <button class="action-btn btn-purple" style="margin:0; padding: 8px; font-size: 0.85rem;" onclick="triggerGlobalFileAction('new_folder')">📁 New Folder</button>
+            </div>
+
+            <div class="file-browser-container">
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50%;">Name</th>
+                            <th style="width: 50%; text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fileListBody">
+                        </tbody>
+                </table>
+            </div>
+        </main>
 
         <a href="/" class="back-link">← Back to Dashboard</a>
     </div>
 
+    <input type="file" id="hiddenFileInput" style="display: none;" onchange="handleFileSelected(this)">
+
     <script>
         const targetAddress = "{{ address }}";
         const streamImg = document.getElementById("liveStream");
+        const fileListBody = document.getElementById("fileListBody");
+        const currentDirDisplay = document.getElementById("currentDirDisplay");
 
+        // --- STREAM ENGINE ---
         function updateFrame() {
             fetch(`/stream_data/${targetAddress}`)
                 .then(res => res.json())
@@ -67,21 +126,142 @@
                 })
                 .catch(err => console.error("Error pulling frame updates:", err));
         }
-
         setInterval(updateFrame, 60);
+
+        // --- FILE LIST NAVIGATION & POPULATION ENGINE ---
+        function refreshFileList() {
+            fetch(`/files/${targetAddress}/list`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        currentDirDisplay.innerText = data.viewing_directory || "/";
+                        fileListBody.innerHTML = "";
+
+                        if (!data.files || data.files.length === 0) {
+                            fileListBody.innerHTML = `<tr><td colspan="2" style="padding: 10px; color: #94a3b8; text-align: center;">No files or folders found</td></tr>`;
+                            return;
+                        }
+
+                        data.files.forEach(item => {
+                            const row = document.createElement("tr");
+                            const isFolder = item.is_directory; 
+                            const displayName = isFolder ? `📁 ${item.name}` : `📄 ${item.name}`;
+                            
+                            row.innerHTML = `
+                                <td>
+                                    <span class="item-link" onclick="handleItemClick('${item.name}', ${isFolder})">${item.name}</span>
+                                </td>
+                                <td style="text-align: right; display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap;">
+                                    ${!isFolder ? `<button class="file-action-btn btn-run" onclick="triggerItemFileAction('run', '${item.name}')">Run</button>` : ''}
+                                    <button class="file-action-btn" onclick="triggerItemFileAction('rename', '${item.name}')">Ren</button>
+                                    <button class="file-action-btn" onclick="triggerItemFileAction('move', '${item.name}')">Mov</button>
+                                    ${isFolder ? `<button class="file-action-btn" onclick="triggerItemFileAction('zip', '${item.name}')">Zip</button>` : `<button class="file-action-btn" onclick="triggerItemFileAction('unzip', '${item.name}')">Unzip</button>`}
+                                    <button class="file-action-btn btn-del" onclick="triggerItemFileAction('delete', '${item.name}')">X</button>
+                                </td>
+                            `;
+                            fileListBody.appendChild(row);
+                        });
+                    }
+                })
+                .catch(err => console.error("Error updating directory context view:", err));
+        }
+        setInterval(refreshFileList, 4000);
+        refreshFileList();
+
+        function handleItemClick(name, isFolder) {
+            if (isFolder) {
+                navigateDirectory(name);
+            }
+        }
+
+        function navigateDirectory(targetSubfolder) {
+            fetch(`/files/${targetAddress}/navigate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ destination: targetSubfolder })
+            })
+            .then(res => res.json())
+            .then(() => refreshFileList())
+            .catch(err => console.error("Error setting active path navigation state:", err));
+        }
+
+        // --- FILE MANAGER BACKEND CONNECTIONS ---
+        function sendFileAPIRequest(endpoint, payload) {
+            fetch(`/files/${targetAddress}/${endpoint}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log(`Operation [${endpoint}] response:`, data);
+                refreshFileList();
+            })
+            .catch(err => console.error(`Operation [${endpoint}] error:`, err));
+        }
+
+        function triggerGlobalFileAction(actionType) {
+            if (actionType === 'new_folder') {
+                const folderName = prompt("Enter new folder name:");
+                if (folderName) sendFileAPIRequest('create_dir', { name: folderName });
+            } else if (actionType === 'upload') {
+                document.getElementById('hiddenFileInput').click();
+            }
+        }
+
+        function handleFileSelected(inputElement) {
+            if (inputElement.files.length === 0) return;
+            const file = inputElement.files[0];
+            
+            // Setting up a standard multipart/form-data upload construct
+            const formData = new FormData();
+            formData.append("file", file);
+
+            fetch(`/files/${targetAddress}/upload`, {
+                method: "POST",
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log("Upload acknowledgment:", data);
+                refreshFileList();
+            })
+            .catch(err => console.error("Upload interface routing error:", err));
+        }
+
+        function triggerItemFileAction(actionType, targetFilename) {
+            if (actionType === 'delete') {
+                if (confirm(`Remove asset: ${targetFilename}?`)) {
+                    sendFileAPIRequest('delete', { target: targetFilename });
+                }
+            } else if (actionType === 'rename') {
+                const updatedIdentifier = prompt("Modify asset name:", targetFilename);
+                if (updatedIdentifier) {
+                    sendFileAPIRequest('rename', { old_name: targetFilename, new_name: updatedIdentifier });
+                }
+            } else if (actionType === 'move') {
+                const destinationPath = prompt("Reallocate object. Enter relative or target location root context:");
+                if (destinationPath) {
+                    sendFileAPIRequest('move', { target: targetFilename, dest: destinationPath });
+                }
+            } else if (actionType === 'run') {
+                if (confirm(`Initialize process execution context for ${targetFilename}?`)) {
+                    sendFileAPIRequest('run', { target: targetFilename });
+                }
+            } else if (actionType === 'zip') {
+                sendFileAPIRequest('zip', { target: targetFilename });
+            } else if (actionType === 'unzip') {
+                sendFileAPIRequest('unzip', { target: targetFilename });
+            }
+        }
 
         function sendControlAction(actionName) {
             fetch(`/control/${targetAddress}`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: actionName })
             })
             .then(res => res.json())
-            .then(data => {
-                console.log("Server response:", data.message);
-            })
             .catch(err => console.error("Error dispatching control command:", err));
         }
     </script>

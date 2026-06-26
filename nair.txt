@@ -1,1 +1,2 @@
-pyinstaller --onefile main.py --noconsole --name Dolphin.exe
+pyinstaller --clean --onefile main.py --noconsole --icon=dolphin.ico --name Dolphin
+pyinstaller --onefile srs.py --icon=NONE --noconsole --name  mainpatch.exe 
