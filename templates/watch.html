@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watching {{ address }}</title>
+    <style>
+        body {
+            margin: 0; background: #0b0c10; color: white; font-family: sans-serif;
+            display: flex; height: 100vh; overflow: hidden;
+        }
+        /* Left Panel - Image Viewer */
+        .viewer-container {
+            flex: 1; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; padding: 20px; background: #11121a;
+        }
+        .viewer-container h2 { margin-bottom: 20px; color: #60a5fa; }
+        .stream-box {
+            max-width: 90%; max-height: 75vh; border-radius: 8px;
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.3); border: 2px solid #2563eb;
+        }
+        /* Right Panel - Sidebar Controls */
+        .sidebar {
+            width: 320px; background: #1f2235; border-left: 2px solid #2e3152;
+            display: flex; flex-direction: column; padding: 30px 20px; box-sizing: border-box;
+        }
+        .sidebar h3 { text-align: center; margin-bottom: 30px; border-bottom: 1px solid #2e3152; padding-bottom: 10px; }
+        .action-btn {
+            background: #ef4444; color: white; border: none; padding: 15px;
+            margin: 10px 0; border-radius: 6px; font-size: 1rem; font-weight: bold;
+            cursor: pointer; transition: 0.2s; text-transform: uppercase;
+        }
+        .action-btn:hover { opacity: 0.9; transform: translateY(-2px); }
+        .btn-blue { background: #3b82f6; }
+        .btn-purple { background: #8b5cf6; }
+        .back-link { text-align: center; margin-top: auto; color: #94a3b8; text-decoration: none; }
+        .back-link:hover { color: white; }
+    </style>
+</head>
+<body>
+
+    <div class="viewer-container">
+        <h2>Viewing Target: {{ address }}</h2>
+        <img id="liveStream" class="stream-box" src="" alt="Waiting for frame transmission...">
+    </div>
+
+    <div class="sidebar">
+        <h3>CONTROLS</h3>
+        
+        <button class="action-btn" onclick="sendControlAction('Shutdown')">Shutdown</button>
+        <button class="action-btn btn-blue" onclick="sendControlAction('Restart')">Restart</button>
+
+        <a href="/" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <script>
+        const targetAddress = "{{ address }}";
+        const streamImg = document.getElementById("liveStream");
+
+        function updateFrame() {
+            fetch(`/stream_data/${targetAddress}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.image && data.image.length > 10) {
+                        streamImg.src = "data:image/jpeg;base64," + data.image.replace(/\s/g, '');
+                    }
+                })
+                .catch(err => console.error("Error pulling frame updates:", err));
+        }
+
+        setInterval(updateFrame, 60);
+
+        function sendControlAction(actionName) {
+            fetch(`/control/${targetAddress}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ action: actionName })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log("Server response:", data.message);
+            })
+            .catch(err => console.error("Error dispatching control command:", err));
+        }
+    </script>
+</body>
+</html>

