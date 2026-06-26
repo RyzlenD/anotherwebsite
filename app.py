@@ -1,6 +1,7 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify,redirect,url_for
 import time
 import threading
+import os
 
 app = Flask(__name__)
 liveusers = {}
@@ -47,6 +48,82 @@ def get_ip():
         
     # Fallback for when you test on your local network (192.168.x.x)
     return request.remote_addr
+
+# --- SECURE KEY LOADING ---
+KEY_FILE = "KEY.TXT"
+if not os.path.exists(KEY_FILE):
+    # Fallback default if you forget to make the file
+    with open(KEY_FILE, "w") as f:
+        f.write("ChangeMe123")
+
+with open(KEY_FILE, "r") as f:
+    SITE_SECRET_KEY = f.read().strip()
+
+
+# --- ENFORCE KEY ON ALL PAGES ---
+@app.before_request
+def restrict_access():
+    # Allow the client PC to POST stream frames to /live without cookies
+    # Also don't block the login page or login submission route itself
+    allowed_routes = ["login", "submit_key", "live"]
+    if request.endpoint in allowed_routes:
+        return
+
+    # Check if user has the correct key saved in their browser cookies
+    user_cookie = request.cookies.get("site_access_token")
+
+    if user_cookie != SITE_SECRET_KEY:
+        # Redirect them straight to the login screen
+        return redirect(url_for("login"))
+
+
+# --- ACCESS PATH ROUTES ---
+@app.route("/login")
+def login():
+    # Simple, inline clean dark login form
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Access Required</title>
+        <style>
+            body { background: #0d0e15; color: white; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin:0; }
+            .login-box { background: #1a1c2e; padding: 30px; border-radius: 8px; border: 1px solid #2e3152; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+            input { background: #0d0e15; border: 1px solid #3b82f6; color: white; padding: 12px; border-radius: 4px; width: 200px; margin-bottom: 15px; font-size: 1rem; text-align: center; }
+            button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; font-size: 1rem;}
+            button:hover { background: #2563eb; }
+            p { color: #ef4444; font-size: 0.9rem; }
+        </style>
+    </head>
+    <body>
+        <div class="login-box">
+            <h2>ENTER ACCESS KEY</h2>
+            <form action="/login" method="POST">
+                <input type="password" name="auth_key" placeholder="Key string..." required autocomplete="off"><br>
+                <button type="submit">VALIDATE</button>
+            </form>
+            """ + (
+        "<p>Invalid Key. Try again.</p>" if "error" in request.args else ""
+    ) + """
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.route("/login", methods=["POST"])
+def submit_key():
+    entered_key = request.form.get("auth_key", "").strip()
+
+    if entered_key == SITE_SECRET_KEY:
+        # Correct key! Redirect home and bake the key token into their cookies
+        response = redirect(url_for("home"))
+        # httponly=True protects the cookie from being stolen via malicious browser JS scripts
+        response.set_cookie("site_access_token", SITE_SECRET_KEY, httponly=True)
+        return response
+    else:
+        # Failed, bounce them back to login with error parameter
+        return redirect(url_for("login", error=1))
 
 @app.route("/")
 def home():
