@@ -7,8 +7,8 @@ from mss import mss
 from PIL import Image
 
 fps = 24
-# URL = "https://anotherwebsite-x1gv.onrender.com/live"
-URL = "http://192.168.1.184:5000/live"
+URL = "https://anotherwebsite-x1gv.onrender.com/live"
+#URL = "http://192.168.1.184:5000/live"
 
 print("Starting screen stream client...")
 

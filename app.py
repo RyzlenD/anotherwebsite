@@ -37,8 +37,15 @@ class LiveUser:
             del liveusers[str(self.address)]
 
 def get_ip():
-    if request.headers.getlist("X-Forwarded-For"):
-        return request.headers.getlist("X-Forwarded-For")[0]
+    # Render passes a comma-separated string of IPs in this header
+    x_forwarded = request.headers.get("X-Forwarded-For")
+    
+    if x_forwarded:
+        # The very first IP in the list is always the real client PC
+        real_ip = x_forwarded.split(",")[0].strip()
+        return real_ip
+        
+    # Fallback for when you test on your local network (192.168.x.x)
     return request.remote_addr
 
 @app.route("/")
