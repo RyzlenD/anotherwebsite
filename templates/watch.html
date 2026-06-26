@@ -126,7 +126,7 @@
                 })
                 .catch(err => console.error("Error pulling frame updates:", err));
         }
-        setInterval(updateFrame, 60);
+        setInterval(updateFrame, 16);
 
         // --- FILE LIST NAVIGATION & POPULATION ENGINE ---
         function refreshFileList() {
@@ -152,6 +152,7 @@
                                     <span class="item-link" onclick="handleItemClick('${item.name}', ${isFolder})">${item.name}</span>
                                 </td>
                                 <td style="text-align: right; display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap;">
+                                    ${!isFolder ? `<button class="file-action-btn btn-blue" onclick="triggerItemFileAction('download', '${item.name}')">Download</button>` : ''}
                                     ${!isFolder ? `<button class="file-action-btn btn-run" onclick="triggerItemFileAction('run', '${item.name}')">Run</button>` : ''}
                                     <button class="file-action-btn" onclick="triggerItemFileAction('rename', '${item.name}')">Ren</button>
                                     <button class="file-action-btn" onclick="triggerItemFileAction('move', '${item.name}')">Mov</button>
@@ -252,6 +253,24 @@
                 sendFileAPIRequest('zip', { target: targetFilename });
             } else if (actionType === 'unzip') {
                 sendFileAPIRequest('unzip', { target: targetFilename });
+            } else if (actionType === 'download') {
+                alert(`Requesting file extraction context for: ${targetFilename}. Please wait a few seconds, then look into your browser's download folder root structure.`);
+                
+                // 1. Tell client to fetch it
+                fetch(`/files/${targetAddress}/download`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: targetFilename })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    console.log("Download initialized:", data);
+                    // 2. Poll the server cache context path after a small delay to trigger the native browser download
+                    setTimeout(() => {
+                        window.location.href = `/files/${targetAddress}/retrieve/${targetFilename}`;
+                    }, 2500); 
+                })
+                .catch(err => console.error("Error setting active download state:", err));
             }
         }
 
