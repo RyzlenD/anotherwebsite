@@ -18,11 +18,10 @@ async def broadcast_to_viewers(payload_dict):
         "type": "websocket.send",
         "text": json.dumps(payload_dict)
     }
-    # Safely dispatch concurrently across active dashboard connections
     await asyncio.gather(*[viewer(message) for viewer in list(connected_viewers)], return_exceptions=True)
 
 async def app(scope, receive, send):
-    # --- 1. HANDLE HTTP ENTIRELY (Render Health Checks, HEAD, GET) ---
+    # --- 1. HANDLE HTTP ENTIRELY (Render Health Checks) ---
     if scope['type'] == 'http':
         await send({
             'type': 'http.response.start',
@@ -44,7 +43,13 @@ async def app(scope, receive, send):
         
         try:
             while True:
-                message = await receive()
+                # Enforce a 15-second maximum window for data or keep-alive pings
+                try:
+                    message = await asyncio.wait_for(receive(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    logging.info(f"Connection timed out due to inactivity/silent disconnect.")
+                    break # Break out to trigger the finally cleanup block
+                
                 if message['type'] == 'websocket.disconnect':
                     break
                 
@@ -57,7 +62,6 @@ async def app(scope, receive, send):
                         client_type = "viewer"
                         connected_viewers.add(send)
                         
-                        # Sync active listings to dashboard immediately
                         await send({
                             'type': 'websocket.send',
                             'text': json.dumps({"type": "list", "data": list(live_targets.keys())})
@@ -69,7 +73,6 @@ async def app(scope, receive, send):
                         target_name = payload.get("COMPUTERNAME", "Unknown-Target")
                         live_targets[target_name] = send
                         
-                        # Notify all dashboards a new machine is online
                         await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
                     
                     # Relay screen streaming frame data
@@ -80,7 +83,6 @@ async def app(scope, receive, send):
                             "user": target_name,
                             "frame": frame_data
                         })
-                        # Return an acknowledgement response back to the target client loop
                         await send({
                             'type': 'websocket.send',
                             'text': json.dumps({"status": "OK"})
@@ -89,15 +91,16 @@ async def app(scope, receive, send):
         except Exception as e:
             logging.error(f"Connection session encountered an error: {e}")
         finally:
-            # Clean up records when either end terminates
+            # Clean up records cleanly when either end terminates or times out
             if client_type == "viewer" and send in connected_viewers:
                 connected_viewers.remove(send)
+                logging.info("Viewer removed successfully.")
             elif client_type == "target" and target_name in live_targets:
                 del live_targets[target_name]
+                logging.info(f"Target '{target_name}' removed successfully.")
                 # Update remaining viewers that target went offline
                 await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    # Fire up Uvicorn to host the application entry point
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
