@@ -1,20 +1,18 @@
-# 1. Use an official lightweight Python image
-FROM python:3.10-slim
+# Use an official lightweight Python image
+FROM python:3.11-slim
 
-# 2. Set the working directory inside the container
+# Set the working directory inside the container
 WORKDIR /app
 
-# 3. Copy the dependencies file first (optimizes Docker caching)
+# Copy the requirements file and install dependencies (if any are added later)
 COPY requirements.txt .
-
-# 4. Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copy the rest of your local project files into the container
-COPY . .
+# Copy the server script into the container
+COPY app.py .
 
-# 6. Expose the port Flask/Gunicorn will run on
-EXPOSE 5000
+# Expose port 5005 for target and viewer TCP connections
+EXPOSE 5005
 
-# 7. Start command using Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Run the server script with unbuffered output so logs appear instantly on Render
+CMD ["python", "-u", "app.py"]

