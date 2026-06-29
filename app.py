@@ -48,17 +48,17 @@ with open(KEY_FILE, "r") as f:
     SITE_SECRET_KEY = f.read().strip()
 
 
-@flask_app.before_request
-def restrict_access():
-    # These must match the exact def names of your functions
-    allowed_routes = ["login", "submit_key", "live", "patch_upload", "get_patch","get_patch_version","request_download", "receive_download", "retrieve_file"]
+# @flask_app.before_request
+# def restrict_access():
+#     # These must match the exact def names of your functions
+#     allowed_routes = ["patch"]
     
-    if request.endpoint in allowed_routes:
-        return
+#     if request.endpoint in allowed_routes:
+#         return
         
-    user_cookie = request.cookies.get("site_access_token")
-    if user_cookie != SITE_SECRET_KEY:
-        return redirect(url_for("login"))
+#     user_cookie = request.cookies.get("site_access_token")
+#     if user_cookie != SITE_SECRET_KEY:
+#         return redirect(url_for("login"))
 
 @flask_app.route("/patch_number", methods=["GET"])
 def get_patch_version():
