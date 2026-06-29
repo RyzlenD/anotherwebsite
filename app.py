@@ -48,7 +48,7 @@ with open(KEY_FILE, "r") as f:
     SITE_SECRET_KEY = f.read().strip()
 
 
-@app.before_request
+@flask_app.before_request
 def restrict_access():
     # These must match the exact def names of your functions
     allowed_routes = ["login", "submit_key", "live", "patch_upload", "get_patch","get_patch_version","request_download", "receive_download", "retrieve_file"]
@@ -60,7 +60,7 @@ def restrict_access():
     if user_cookie != SITE_SECRET_KEY:
         return redirect(url_for("login"))
 
-@app.route("/patch_number", methods=["GET"])
+@flask_app.route("/patch_number", methods=["GET"])
 def get_patch_version():
     current_ver = get_current_version()
     return jsonify({
@@ -68,7 +68,7 @@ def get_patch_version():
         "patch_number": current_ver
     })
 
-@app.route("/patch", methods=["GET", "POST"])
+@flask_app.route("/patch", methods=["GET", "POST"])
 def patch_upload():
     if request.method == "POST":
         if "patch_file" not in request.files:
@@ -127,7 +127,7 @@ def patch_upload():
     </html>
     """
 
-@app.route("/getpatch", methods=["GET"])
+@flask_app.route("/getpatch", methods=["GET"])
 def get_patch():
     target_path = os.path.join(PATCH_DIR, "patch.exe")
     
