@@ -4,8 +4,6 @@ import threading
 import os
 import threading
 import base64
-import tkinter as tk
-from tkinter import messagebox, ttk
 from io import BytesIO
 from PIL import Image, ImageTk
 import asyncio
