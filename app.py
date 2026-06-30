@@ -227,7 +227,7 @@ async def websocket_handler(scope, receive, send):
     try:
         while True:
             try:
-                message = await receive()
+                message: = await receive()
             except Exception as e:
                 break
             

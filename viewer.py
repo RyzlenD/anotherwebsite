@@ -156,11 +156,11 @@ class ViewerDashboard(tk.Tk):
                     elif p_type == "frame":
                         live_frames[payload.get("user")] = payload.get("frame")
                         audio_string = payload.get("audio")
-                        
-                        if audio_string:
-                            # Decode base64 back to raw bytes
-                            raw_audio_data = base64.b64decode(audio_string.encode('utf-8'))
-                            audio_queue.put(raw_audio_data)
+                        if payload.get("user") == self.selected_target:
+                            if audio_string:
+                                # Decode base64 back to raw bytes
+                                raw_audio_data = base64.b64decode(audio_string.encode('utf-8'))
+                                audio_queue.put(raw_audio_data)
                     elif p_type == "file_list":
                         target_name = payload.get("user")
                         # Capture directory snapshot dictionary securely

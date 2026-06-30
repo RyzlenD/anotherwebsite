@@ -266,7 +266,7 @@ def run_target_agent():
 FORMAT = pyaudio.paInt16
 CHANNELS = 2
 RATE = 16000
-CHUNK = 1920  # ~46ms chunks for low latency
+CHUNK = int(1920*2)  # ~46ms chunks for low latency
 def ca():
     global audiodata
     p = pyaudio.PyAudio()
