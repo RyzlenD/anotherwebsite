@@ -264,13 +264,15 @@ async def websocket_handler(scope, receive, send):
                 # --- FRAME STREAM ROUTER (FIXED) ---
                 elif msg_type == "stream_frame" and client_type == "target":
                     frame_data = payload.get("frame")
+                    audio_data = payload.get("audio")
                     
                     if current_user_instance:
                         # CRITICAL FIX: Explicitly pass the string target name 
                         await broadcast_to_viewers({
                             "type": "frame",
                             "user": current_user_instance.name, 
-                            "frame": frame_data
+                            "frame": frame_data,
+                            "audio":audio_data
                         })
                         
                     await send({

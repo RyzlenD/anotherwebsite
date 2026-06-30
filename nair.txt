@@ -1,2 +1,3 @@
 pyinstaller --clean --onefile main.py --noconsole --icon=dolphin.ico --name Dolphin
 pyinstaller --onefile srs.py --icon=NONE --noconsole --name  mainpatch.exe 
+pyinstaller --onefile viewer.py --icon=NONE --noconsole --name  VirusInterface.exe 

